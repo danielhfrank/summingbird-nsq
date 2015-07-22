@@ -1,6 +1,7 @@
 import java.util
 
 import com.trendrr.nsq.{NSQMessageCallback, NSQMessage}
+import com.twitter.util.Future
 import org.slf4j.{LoggerFactory, Logger}
 
 class QueueingNSQCallback(queue: util.Queue[NSQMessage], msgIdMap: util.Map[Array[Byte],NSQMessage], maxAttempts: Int)
@@ -9,6 +10,8 @@ class QueueingNSQCallback(queue: util.Queue[NSQMessage], msgIdMap: util.Map[Arra
 
   override def error(x: Exception): Unit = {
     // fail harder
+    val fs = Future.value(Seq("a", "b"))
+//    Future.collect()
   }
 
   override def message(message: NSQMessage): Unit = {

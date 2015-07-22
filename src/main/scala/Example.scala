@@ -6,6 +6,8 @@ import com.twitter.util.Future
 
 import scala.util.Try
 
+import scala.language.existentials
+
 object Example {
 
   private class FakeReadableStore extends ReadableStore[String, Int] with Mergeable[String, Int]{
@@ -33,6 +35,18 @@ object Example {
     val summed = mapped.sumByKey(store)
 
     val stream = (new NSQ).plan(summed)
+  }
+
+  def receiveOutputStream(out: NSQ#Plan[_]) = {
+    out.foreach{ ftrResult =>
+      ftrResult
+        .onSuccess{
+        case NSQWrappedValue(msg, _) => msg.finished()
+      }
+//      .onFailure { TODO send the message along in failures somehow? oh man..
+//
+//      }
+    }
   }
 
 }

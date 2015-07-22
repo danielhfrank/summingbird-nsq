@@ -41,7 +41,7 @@ class NSQ extends Platform[NSQ]{
         val (s, m) = outerProducer match {
           case NamedProducer(producer, _) => toStream(producer, jamfs)
           case IdentityKeyedProducer(producer) => toStream(producer, jamfs)
-          case Source(source) => (source.toStream.map(x => Future.value(Some(x))), jamfs)
+          case Source(source) => (source.toWrappedStream.map(x => Future.value(x)), jamfs)
           case OptionMappedProducer(producer, fn) =>
             val (s, m) = toStream(producer, jamfs)
             (s.flatMap(fn(_)), m)
@@ -108,7 +108,7 @@ class NSQ extends Platform[NSQ]{
             val (s, m) = toStream(producer, jamfs)
             val summed = s.map { futureStreamValue =>
               futureStreamValue.flatMap { maybePair =>
-                val maybeFutureResult = maybePair.map {
+                val maybeFutureResult = maybePair.map { // TODO match on wrapped value here and inject exception?
                   case pair@(k, deltaV) =>
                     val oldVFuture = store.merge(pair)
                     oldVFuture.map { oldV => (k, (oldV, deltaV))}
