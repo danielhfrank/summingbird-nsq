@@ -11,10 +11,10 @@ class NSQ extends Platform[NSQ]{
 
   // These can be taken from Memory
   type Sink[-T] = (T => Unit)
-  type Plan[T] = Stream[Future[TraversableOnce[T]]]
+  type Plan[T] = Stream[NSQWrappedValue[T]]
 
   private type Prod[T] = Producer[NSQ, T]
-  private type JamfMap = Map[Prod[_], Stream[Future[TraversableOnce[_]]]]
+  private type JamfMap = Map[Prod[_], Stream[NSQWrappedValue[_]]]
 
   // These can be taken from Storm
   type Store[-K, V] = Mergeable[K, V]
@@ -34,14 +34,14 @@ class NSQ extends Platform[NSQ]{
     toStream(memoryDag, Map.empty)._1
   }
 
-  def toStream[T, K, V](outerProducer: Prod[T], jamfs: JamfMap): (Stream[Future[TraversableOnce[T]]], JamfMap) = {
+  def toStream[T, K, V](outerProducer: Prod[T], jamfs: JamfMap): (Stream[NSQWrappedValue[T]], JamfMap) = {
     jamfs.get(outerProducer) match {
-      case Some(s) => (s.asInstanceOf[Stream[Future[TraversableOnce[T]]]], jamfs)
+      case Some(s) => (s.asInstanceOf[Stream[NSQWrappedValue[T]]], jamfs)
       case None =>
         val (s, m) = outerProducer match {
           case NamedProducer(producer, _) => toStream(producer, jamfs)
           case IdentityKeyedProducer(producer) => toStream(producer, jamfs)
-          case Source(source) => (source.toWrappedStream.map(x => Future.value(x)), jamfs)
+          case Source(source) => (source.toWrappedStream, jamfs)
           case OptionMappedProducer(producer, fn) =>
             val (s, m) = toStream(producer, jamfs)
             (s.flatMap(fn(_)), m)
@@ -57,23 +57,19 @@ class NSQ extends Platform[NSQ]{
 
           case KeyFlatMappedProducer(producer, fn) =>
             val (s, m) = toStream(producer, jamfs)
-            (s.map { futureStreamValue =>
-              futureStreamValue.map { streamValue =>
-                streamValue.flatMap {
-                  case (k, v) =>
-                    fn(k).map((_, v))
-                }
+            (s.map { streamValue =>
+              streamValue.flatMapTrav {
+                case (k, v) =>
+                  fn(k).map((_, v))
               }
             }, m)
 
           case ValueFlatMappedProducer(producer, fn) =>
             val (s, m) = toStream(producer, jamfs)
-            (s.map { futureStreamValue =>
-              futureStreamValue.map { streamValue =>
-                streamValue.flatMap {
-                  case (k, v) =>
-                    fn(v).map((k, _))
-                }
+            (s.map { streamValue =>
+              streamValue.flatMapTrav {
+                case (k, v) =>
+                  fn(v).map((k, _))
               }
             }, m)
 
@@ -92,13 +88,11 @@ class NSQ extends Platform[NSQ]{
 
           case LeftJoinedProducer(producer, service) =>
             val (s, m) = toStream(producer, jamfs)
-            val joined = s.map { futureStreamValue =>
-              futureStreamValue.flatMap { streamValue =>
-                Future.collect(streamValue.map {
-                  case (k, v) =>
-                    val futureJoinResult = service.get(k)
-                    futureJoinResult.map { joinResult => (k, (v, joinResult))}
-                }.toList)
+            val joined = s.map { streamValue =>
+              streamValue.flatMapFut{
+                case (k, v) =>
+                  val futureJoinResult = service.get(k)
+                  futureJoinResult.map { joinResult => (k, (v, joinResult))}
               }
             }
             (joined, m)
@@ -106,20 +100,16 @@ class NSQ extends Platform[NSQ]{
           case Summer(producer, store, monoid) =>
             // TODO - use online.executor.Summer
             val (s, m) = toStream(producer, jamfs)
-            val summed = s.map { futureStreamValue =>
-              futureStreamValue.flatMap { maybePair =>
-                val maybeFutureResult = maybePair.map { // TODO match on wrapped value here and inject exception?
-                  case pair@(k, deltaV) =>
-                    val oldVFuture = store.merge(pair)
-                    oldVFuture.map { oldV => (k, (oldV, deltaV))}
-                }
-                Future.collect(maybeFutureResult.toList)
+            val summed = s.map { streamValue =>
+              streamValue.flatMapFut {
+                case pair@(k, deltaV) =>
+                  val oldVFuture = store.merge(pair)
+                  oldVFuture.map { oldV => (k, (oldV, deltaV))}
               }
-
             }
             (summed, m)
         }
-        val goodS = s.asInstanceOf[Stream[Future[TraversableOnce[T]]]]
+        val goodS = s.asInstanceOf[Stream[NSQWrappedValue[T]]]
         (goodS, m + (outerProducer -> goodS))
     }
   }

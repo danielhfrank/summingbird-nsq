@@ -35,17 +35,18 @@ object Example {
     val summed = mapped.sumByKey(store)
 
     val stream = (new NSQ).plan(summed)
+    // throw away result cause I was having trouble getting types to match.
+    // should still preserve success / failure
+    val nulledStream = stream.map(_.map(_ => Unit))
+    receiveOutputStream(nulledStream)
   }
 
-  def receiveOutputStream(out: NSQ#Plan[_]) = {
-    out.foreach{ ftrResult =>
-      ftrResult
-        .onSuccess{
-        case NSQWrappedValue(msg, _) => msg.finished()
-      }
-//      .onFailure { TODO send the message along in failures somehow? oh man..
-//
-//      }
+  def receiveOutputStream(out: NSQ#Plan[Unit.type]) = {
+    out.foreach{
+        case NSQWrappedValue(msg, result) =>
+          result
+            .onSuccess(_ => msg.finished())
+            .onFailure(_ => msg.requeue())
     }
   }
 
