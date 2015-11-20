@@ -10,6 +10,8 @@ case class NSQWrappedValue[T](messageObject: Option[NSQMessage], underlying: Fut
 
   def map[B](f: T => B): NSQWrappedValue[B] = new NSQWrappedValue[B](messageObject, underlying.map(_.map(f)))
 
+  def foreach(f: T => Unit): NSQWrappedValue[T] = new NSQWrappedValue[T](messageObject, underlying.foreach(_.foreach(f)))
+
   /**
    *
    * @param f One to many

@@ -83,7 +83,9 @@ class NSQ extends Platform[NSQ]{
 
           case WrittenProducer(producer, fn) =>
             val (s, m) = toStream(producer, jamfs)
-            (s.map { streamValue => streamValue.map(fn(_)); streamValue}, m)
+            (s.map { streamValue =>
+              streamValue.foreach(fn)
+            }, m)
 
           case LeftJoinedProducer(producer, service) =>
             val (s, m) = toStream(producer, jamfs)

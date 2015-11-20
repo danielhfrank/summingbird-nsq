@@ -28,8 +28,8 @@ object Example {
   }
 
   def printSink(sumResult: (String, (Option[Int], Int))): Unit = {
-    val (k,(prevV, newV)) = sumResult
-    println(s"k: $k, prevV: $prevV, newV: $newV")
+    val (k,(prevV, incrV)) = sumResult
+    println(s"k: $k, prevV: $prevV, incrV: $incrV")
   }
 
   def main (args: Array[String]) {
@@ -43,16 +43,13 @@ object Example {
     val written = summed.write(printSink)
 
     val stream = (new NSQ).plan(written)
-    // throw away result cause I was having trouble getting types to match.
-    // should still preserve success / failure
-    val nulledStream = stream.map(_.map(_ => Unit))
 
     source.open()
 
-    receiveOutputStream(nulledStream)
+    receiveOutputStream(stream)
   }
 
-  def receiveOutputStream(out: NSQ#Plan[Unit.type]) = {
+  def receiveOutputStream(out: NSQ#Plan[_]) = {
     out.foreach{
         case NSQWrappedValue(msg, result) =>
           result
