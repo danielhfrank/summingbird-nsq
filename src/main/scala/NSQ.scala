@@ -10,7 +10,7 @@ import com.twitter.util.{Closable, Future, Time}
 class NSQ extends Platform[NSQ]{
 
   // These can be taken from Memory
-  type Sink[-T] = (T => Unit)
+  type Sink[-T] = (T => Unit) // TODO maybe want to make this something w/ Future[Unit] so we can chain stuff
   type Plan[T] = Stream[NSQWrappedValue[T]]
 
   private type Prod[T] = Producer[NSQ, T]
@@ -47,7 +47,7 @@ class NSQ extends Platform[NSQ]{
 
           case FlatMappedProducer(producer, fn) =>
             val (s, m) = toStream(producer, jamfs)
-            (s.flatMap(fn(_)), m)
+            (s.map(streamElem => streamElem.flatMapTrav(fn(_))), m)
 
           case MergedProducer(l, r) =>
             val (leftS, leftM) = toStream(l, jamfs)
@@ -72,7 +72,7 @@ class NSQ extends Platform[NSQ]{
               }
             }, m)
 
-          case AlsoProducer(l, r) =>
+          case AlsoProducer(l, r) => // XXX this looks like it won't work (see bit about forcing stream)
             //Plan the first one, but ignore it
             val (left, leftM) = toStream(l, jamfs)
             // We need to force all of left to make sure any
@@ -83,7 +83,7 @@ class NSQ extends Platform[NSQ]{
 
           case WrittenProducer(producer, fn) =>
             val (s, m) = toStream(producer, jamfs)
-            (s.map { i => fn(i); i}, m)
+            (s.map { streamValue => streamValue.map(fn(_)); streamValue}, m)
 
           case LeftJoinedProducer(producer, service) =>
             val (s, m) = toStream(producer, jamfs)

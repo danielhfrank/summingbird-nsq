@@ -23,9 +23,13 @@ object Example {
       val prevV = intMap.get(k)
       val newV = semigroup.sumOption(Seq(Some(v), prevV).flatten).get
       intMap.put(k, newV)
-      println(s"k: $k, prevV: $prevV, newV: $newV")
       Future.value(prevV)
     }
+  }
+
+  def printSink(sumResult: (String, (Option[Int], Int))): Unit = {
+    val (k,(prevV, newV)) = sumResult
+    println(s"k: $k, prevV: $prevV, newV: $newV")
   }
 
   def main (args: Array[String]) {
@@ -36,8 +40,9 @@ object Example {
     val store = new FakeReadableStore
     val mapped = sbSource.map{ s => (s, 1)}
     val summed = mapped.sumByKey(store)
+    val written = summed.write(printSink)
 
-    val stream = (new NSQ).plan(summed)
+    val stream = (new NSQ).plan(written)
     // throw away result cause I was having trouble getting types to match.
     // should still preserve success / failure
     val nulledStream = stream.map(_.map(_ => Unit))
