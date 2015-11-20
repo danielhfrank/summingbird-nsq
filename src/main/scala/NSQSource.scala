@@ -1,36 +1,34 @@
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.{TimeUnit, LinkedBlockingQueue, ConcurrentHashMap, ConcurrentLinkedQueue}
 
-import com.trendrr.nsq.NSQMessage
+import com.trendrr.nsq.{NSQConsumer, NSQMessage}
+import com.trendrr.nsq.lookup.NSQLookupDynMapImpl
 
 
-class NSQSource[T](topic: String, channel: String, decodeFn : (Array[Byte]) => TraversableOnce[T]) {
+class NSQSource[T](config: NSQClientConfig, decodeFn : (Array[Byte]) => TraversableOnce[T]) {
 
   val queue = new LinkedBlockingQueue[NSQMessage]
-
-  val msgIdMap = new ConcurrentHashMap[Array[Byte], NSQMessage]
 
   val wrappedValueFactory = NSQWrappedValue.factory(decodeFn) _
 
   private val killSwitch = new AtomicBoolean()
 
+  val callback = new QueueingNSQCallback(queue, 1) // TODO configure me
+
+  val lookup = new NSQLookupDynMapImpl
+  config.lookupAddrs.foreach{case (host, port) => lookup.addAddr(host, port)}
+
+  val consumer = new NSQConsumer(lookup, config.topic, config.channel, callback)
+  consumer.setMessagesPerBatch(1)
+  consumer.setLookupPeriod(60 * 1000)
+
+  // ------------------------
+
   def close() = killSwitch.set(true)
-
-  def nextOption: Option[T]= {
-    val nextElem = queue.poll(1001, TimeUnit.DAYS)
-    val decoded = decodeFn(nextElem.getMessage)
-    decoded.toList.headOption
-  }
-
-  def toStream: Stream[T] = {
-    nextOption match {
-      case Some(elem) => elem #:: toStream
-      case None => toStream
-    }
-  }
 
   def nextWrappedValue: NSQWrappedValue[T] = {
     // TODO some kind of Future.select to shutdown?
+    println("stuck in nextWrappedValue")
     val nextElem = queue.poll(1001, TimeUnit.DAYS)
     wrappedValueFactory(nextElem)
   }
@@ -39,8 +37,14 @@ class NSQSource[T](topic: String, channel: String, decodeFn : (Array[Byte]) => T
     if(killSwitch.get()){
       Stream.empty[NSQWrappedValue[T]]
     } else{
-      nextWrappedValue #:: toWrappedStream
+      println("in toWrappedStream")
+//      Stream.newBuilder
+      Stream.empty[NSQWrappedValue[T]] //#::: nextWrappedValue #:: toWrappedStream
     }
+
+  def open() = {
+    consumer.start()
+  }
 
 
 }

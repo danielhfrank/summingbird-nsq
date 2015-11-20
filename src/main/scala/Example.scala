@@ -28,7 +28,9 @@ object Example {
   }
 
   def main (args: Array[String]) {
-    val source = new NSQSource[String]("test", "summingbird-nsq", bytes => Try(new String(bytes, "UTF-8")).toOption)
+    val clientConfig = NSQClientConfig("test", "summingbird-nsq", Seq(("localhost", 4161)))
+
+    val source = new NSQSource[String](clientConfig, bytes => Try(new String(bytes, "UTF-8")).toOption)
     val sbSource = Source[NSQ, String](source)
     val store = new FakeReadableStore
     val mapped = sbSource.map{ s => (s, 1)}
@@ -37,7 +39,13 @@ object Example {
     val stream = (new NSQ).plan(summed)
     // throw away result cause I was having trouble getting types to match.
     // should still preserve success / failure
+    println("OK")
     val nulledStream = stream.map(_.map(_ => Unit))
+
+    println("Ready to start up the consumer")
+    source.open()
+    println("Started the consumer, reading from stream")
+
     receiveOutputStream(nulledStream)
   }
 

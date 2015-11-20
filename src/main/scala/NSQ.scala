@@ -30,11 +30,11 @@ class NSQ extends Platform[NSQ]{
     val dagOptimizer = new DagOptimizer[NSQ] {}
     val memoryTail = dagOptimizer.optimize(prod, dagOptimizer.ValueFlatMapToFlatMap)
     val memoryDag = memoryTail.asInstanceOf[TailProducer[NSQ, T]]
-
     toStream(memoryDag, Map.empty)._1
   }
 
   def toStream[T, K, V](outerProducer: Prod[T], jamfs: JamfMap): (Stream[NSQWrappedValue[T]], JamfMap) = {
+    println(s"In toStream with ${jamfs.size} elements in the jamf map")
     jamfs.get(outerProducer) match {
       case Some(s) => (s.asInstanceOf[Stream[NSQWrappedValue[T]]], jamfs)
       case None =>

@@ -4,7 +4,7 @@ import com.trendrr.nsq.{NSQMessageCallback, NSQMessage}
 import com.twitter.util.Future
 import org.slf4j.{LoggerFactory, Logger}
 
-class QueueingNSQCallback(queue: util.Queue[NSQMessage], msgIdMap: util.Map[Array[Byte],NSQMessage], maxAttempts: Int)
+class QueueingNSQCallback(queue: util.Queue[NSQMessage], maxAttempts: Int)
   extends NSQMessageCallback {
   @transient protected lazy val logger: Logger = LoggerFactory.getLogger(getClass)
 
@@ -20,7 +20,6 @@ class QueueingNSQCallback(queue: util.Queue[NSQMessage], msgIdMap: util.Map[Arra
       logger.info("Giving up on " + message.getId.toString)
       message.finished()
     } else {
-      msgIdMap.put(message.getId, message)
       queue.add(message)
     }
   }
