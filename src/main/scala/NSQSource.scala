@@ -3,10 +3,11 @@ import java.util.concurrent.{TimeUnit, LinkedBlockingQueue, ConcurrentHashMap, C
 
 import com.trendrr.nsq.{NSQConsumer, NSQMessage}
 import com.trendrr.nsq.lookup.NSQLookupDynMapImpl
+import com.twitter.summingbird.TimeExtractor
 import com.twitter.util.Future
 
 
-class NSQSource[T](config: NSQClientConfig, decodeFn : (Array[Byte]) => TraversableOnce[T]) {
+class NSQSource[T: TimeExtractor](config: NSQClientConfig, decodeFn : (Array[Byte]) => TraversableOnce[T]) {
 
   val queue = new LinkedBlockingQueue[NSQMessage]
 
@@ -38,7 +39,7 @@ class NSQSource[T](config: NSQClientConfig, decodeFn : (Array[Byte]) => Traversa
       Stream.empty[NSQWrappedValue[T]]
     } else{
       Stream.newBuilder
-      val dummyVal: NSQWrappedValue[T] = new NSQWrappedValue[T](None, Future.value(Nil))
+      val dummyVal: NSQWrappedValue[T] = new NSQWrappedValue[T](None, None, Future.value(Nil))
       dummyVal #:: (nextWrappedValue #:: toWrappedStream)
     }
 

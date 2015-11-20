@@ -17,7 +17,7 @@ class NSQ extends Platform[NSQ]{
   private type JamfMap = Map[Prod[_], Stream[NSQWrappedValue[_]]]
 
   // These can be taken from Storm
-  type Store[-K, V] = Mergeable[K, V]
+  type Store[-K, V] = MergeableStoreFactory[(K, BatchID), V]
   type Service[-K, +V] = ReadableStore[K, V]
 
   // And these are ours
@@ -104,8 +104,16 @@ class NSQ extends Platform[NSQ]{
             val summed = s.map { streamValue =>
               streamValue.flatMapFut {
                 case pair@(k, deltaV) =>
-                  val oldVFuture = store.merge(pair)
-                  oldVFuture.map { oldV => (k, (oldV, deltaV))}
+                  val maybeTimestamp = streamValue.timestamp.map(Timestamp(_))
+                  val maybeBatchId = maybeTimestamp.map(store.mergeableBatcher.batchOf)
+                  maybeBatchId match {
+                    case Some(batchId) =>
+                      val oldVFuture = store.mergeableStore().merge((k, batchId), deltaV)
+                      oldVFuture.map { oldV => (k, (oldV, deltaV))}
+                    case None => Future.exception(new RuntimeException("asdf"))
+                  }
+
+
               }
             }
             (summed, m)
