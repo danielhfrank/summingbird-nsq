@@ -3,7 +3,8 @@ import com.twitter.util.Future
 
 import scala.collection.{GenTraversableOnce, TraversableOnce}
 
-case class NSQWrappedValue[T](messageObject: NSQMessage, underlying: Future[TraversableOnce[T]]) {
+case class NSQWrappedValue[T](messageObject: Option[NSQMessage], underlying: Future[TraversableOnce[T]]) {
+  // messageObject is only optional so that we can prime the Stream with a dummy message. :fu: Stream
 
   // ----- praying these are the only methods we actually use
 
@@ -31,6 +32,6 @@ case class NSQWrappedValue[T](messageObject: NSQMessage, underlying: Future[Trav
 object NSQWrappedValue {
 
   def factory[T](decodeFn : (Array[Byte]) => TraversableOnce[T])(message: NSQMessage): NSQWrappedValue[T] =
-    new NSQWrappedValue[T](message, Future.value(decodeFn(message.getMessage)))
+    new NSQWrappedValue[T](Some(message), Future.value(decodeFn(message.getMessage)))
 
 }

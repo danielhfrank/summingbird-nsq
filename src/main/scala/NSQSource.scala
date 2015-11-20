@@ -3,6 +3,7 @@ import java.util.concurrent.{TimeUnit, LinkedBlockingQueue, ConcurrentHashMap, C
 
 import com.trendrr.nsq.{NSQConsumer, NSQMessage}
 import com.trendrr.nsq.lookup.NSQLookupDynMapImpl
+import com.twitter.util.Future
 
 
 class NSQSource[T](config: NSQClientConfig, decodeFn : (Array[Byte]) => TraversableOnce[T]) {
@@ -28,7 +29,6 @@ class NSQSource[T](config: NSQClientConfig, decodeFn : (Array[Byte]) => Traversa
 
   def nextWrappedValue: NSQWrappedValue[T] = {
     // TODO some kind of Future.select to shutdown?
-    println("stuck in nextWrappedValue")
     val nextElem = queue.poll(1001, TimeUnit.DAYS)
     wrappedValueFactory(nextElem)
   }
@@ -37,9 +37,9 @@ class NSQSource[T](config: NSQClientConfig, decodeFn : (Array[Byte]) => Traversa
     if(killSwitch.get()){
       Stream.empty[NSQWrappedValue[T]]
     } else{
-      println("in toWrappedStream")
-//      Stream.newBuilder
-      Stream.empty[NSQWrappedValue[T]] //#::: nextWrappedValue #:: toWrappedStream
+      Stream.newBuilder
+      val dummyVal: NSQWrappedValue[T] = new NSQWrappedValue[T](None, Future.value(Nil))
+      dummyVal #:: (nextWrappedValue #:: toWrappedStream)
     }
 
   def open() = {

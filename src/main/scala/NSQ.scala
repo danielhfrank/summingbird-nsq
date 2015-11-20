@@ -34,7 +34,6 @@ class NSQ extends Platform[NSQ]{
   }
 
   def toStream[T, K, V](outerProducer: Prod[T], jamfs: JamfMap): (Stream[NSQWrappedValue[T]], JamfMap) = {
-    println(s"In toStream with ${jamfs.size} elements in the jamf map")
     jamfs.get(outerProducer) match {
       case Some(s) => (s.asInstanceOf[Stream[NSQWrappedValue[T]]], jamfs)
       case None =>
@@ -44,7 +43,7 @@ class NSQ extends Platform[NSQ]{
           case Source(source) => (source.toWrappedStream, jamfs)
           case OptionMappedProducer(producer, fn) =>
             val (s, m) = toStream(producer, jamfs)
-            (s.flatMap(fn(_)), m)
+            (s.map(streamElem => streamElem.flatMapTrav(fn(_))), m)
 
           case FlatMappedProducer(producer, fn) =>
             val (s, m) = toStream(producer, jamfs)

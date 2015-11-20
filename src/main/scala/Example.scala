@@ -23,6 +23,7 @@ object Example {
       val prevV = intMap.get(k)
       val newV = semigroup.sumOption(Seq(Some(v), prevV).flatten).get
       intMap.put(k, newV)
+      println(s"k: $k, prevV: $prevV, newV: $newV")
       Future.value(prevV)
     }
   }
@@ -39,12 +40,9 @@ object Example {
     val stream = (new NSQ).plan(summed)
     // throw away result cause I was having trouble getting types to match.
     // should still preserve success / failure
-    println("OK")
     val nulledStream = stream.map(_.map(_ => Unit))
 
-    println("Ready to start up the consumer")
     source.open()
-    println("Started the consumer, reading from stream")
 
     receiveOutputStream(nulledStream)
   }
@@ -53,8 +51,8 @@ object Example {
     out.foreach{
         case NSQWrappedValue(msg, result) =>
           result
-            .onSuccess(_ => msg.finished())
-            .onFailure(_ => msg.requeue())
+            .onSuccess(_ => msg.foreach(_.finished()))
+            .onFailure(_ => msg.foreach(_.requeue()))
     }
   }
 
