@@ -5,9 +5,12 @@ import com.twitter.util.Try
 
 /**
   * This class handles receiving messages from nsqd, pushing them into a topology,
-  * and ack/req-ing them when the topology is finished
+  * and ack/req-ing them when the topology is finished.
+  *
+  * Note - this implementation may create a number of outstanding Futures waiting to run onSuccess or onFailure.
+  * We're relying on nsqd's rate-limiting (based on max-in-flight) to keep this number bounded
   */
-class NSQDriver[T: TimeExtractor](receiver: Receiver[T])(decodeFn: (Array[Byte]) => Try[T]) extends NSQMessageCallback {
+class NSQPushDriverCallback[T: TimeExtractor](receiver: Receiver[T], decodeFn: (Array[Byte]) => Try[T]) extends NSQMessageCallback {
 
   val te = implicitly[TimeExtractor[T]]
 

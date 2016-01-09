@@ -21,7 +21,7 @@ class NSQ extends Platform[NSQ]{
   type Service[-K, +V] = ReadableStore[K, V]
 
   // And these are ours
-  type Source[T] = NSQSource[T]
+  type Source[T] = NSQPullSource[T]
 
 
   // -------------------
