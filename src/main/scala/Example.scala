@@ -44,7 +44,7 @@ object Example {
     implicit val dummyTimeExtractor = TimeExtractor[String](_ => 0L)
     val batcher = Batcher.ofDays(1)
 
-    val source = new NSQSource[String](clientConfig, bytes => Try(new String(bytes, "UTF-8")).toOption)
+    val source = new NSQPullSource[String](clientConfig, bytes => Try(new String(bytes, "UTF-8")).toOption)
     val sbSource = Source[NSQ, String](source)
     val store = storeFor[Int](batcher)
     val mapped = sbSource.map{ s => (s, 1)}

@@ -7,7 +7,7 @@ import com.twitter.summingbird.TimeExtractor
 import com.twitter.util.Future
 
 
-class NSQSource[T: TimeExtractor](config: NSQClientConfig, decodeFn : (Array[Byte]) => TraversableOnce[T]) {
+class NSQPullSource[T: TimeExtractor](config: NSQClientConfig, decodeFn : (Array[Byte]) => TraversableOnce[T]) {
 
   val queue = new LinkedBlockingQueue[NSQMessage]
 
