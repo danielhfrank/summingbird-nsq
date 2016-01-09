@@ -12,31 +12,30 @@ import scala.language.existentials
 
 object Example {
 
-  private class FakeMergeableStore extends ReadableStore[(String, BatchID), Int] with Mergeable[(String, BatchID), Int]{
+  private class FakeMergeableStore[V](override val semigroup: Semigroup[V]) extends ReadableStore[(String, BatchID), V]
+    with Mergeable[(String, BatchID), V]{
 
-    private val intMap = new scala.collection.mutable.HashMap[String, Int]
+    private val map = new scala.collection.mutable.HashMap[String, V]
 
-    override def get(k: (String, BatchID)): Future[Option[Int]] = Future.value(intMap.get(k._1))
+    override def get(k: (String, BatchID)): Future[Option[V]] = Future.value(map.get(k._1))
 
-    override def semigroup: Semigroup[Int] = Semigroup.intSemigroup
-
-    override def merge(kv: ((String, BatchID), Int)): Future[Option[Int]] = {
-      val ((k, _),v) = kv
-      val prevV = intMap.get(k)
+    override def merge(kv: ((String, BatchID), V)): Future[Option[V]] = {
+      val ((k, _), v) = kv
+      val prevV = map.get(k)
       val newV = semigroup.sumOption(Seq(Some(v), prevV).flatten).get
-      intMap.put(k, newV)
+      map.put(k, newV)
       Future.value(prevV)
     }
   }
 
-  private val ourStore = new FakeMergeableStore
-  def storeFor(batcher: Batcher) = {
-    MergeableStoreFactory({ () => ourStore}, batcher)
+  def storeFor[V](b: Batcher) = new NSQStore[String, V] {
+    def batcher = b
+    def mergeable(sg: Semigroup[V]): Mergeable[(String, BatchID), V] = new FakeMergeableStore(sg)
   }
 
-  def printSink(sumResult: (String, (Option[Int], Int))): Unit = {
+  def printSink(sumResult: (String, (Option[Int], Int))): Future[Unit] = {
     val (k,(prevV, incrV)) = sumResult
-    println(s"k: $k, prevV: $prevV, incrV: $incrV")
+    Future(println(s"k: $k, prevV: $prevV, incrV: $incrV"))
   }
 
   def main (args: Array[String]) {
@@ -47,7 +46,7 @@ object Example {
 
     val source = new NSQSource[String](clientConfig, bytes => Try(new String(bytes, "UTF-8")).toOption)
     val sbSource = Source[NSQ, String](source)
-    val store = storeFor(batcher)
+    val store = storeFor[Int](batcher)
     val mapped = sbSource.map{ s => (s, 1)}
     val summed = mapped.sumByKey(store)
     val written = summed.write(printSink)
@@ -59,13 +58,6 @@ object Example {
     receiveOutputStream(stream)
   }
 
-  def receiveOutputStream(out: NSQ#Plan[_]) = {
-    out.foreach{
-        case NSQWrappedValue(msg, _, result) =>
-          result
-            .onSuccess(_ => msg.foreach(_.finished()))
-            .onFailure(_ => msg.foreach(_.requeue()))
-    }
-  }
-
+  def receiveOutputStream(out: NSQ#Plan[_]): Future[Unit] =
+    out.run()
 }

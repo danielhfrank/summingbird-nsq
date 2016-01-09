@@ -13,6 +13,10 @@ sealed trait Receiver[-T] {
     items.foldLeft(Future.Unit) { (prev, t) => prev.join(push(t)).unit }
 }
 
+case class SourceReceiver[T](src: NSQSource[T], next: Receiver[T]) extends Receiver[Nothing] {
+  override def push(item: (Timestamp, Nothing)) = sys.error("Cannot push into Source: " + item)
+}
+
 case class FlatMapReceiver[A, B](fn: A => TraversableOnce[B], next: Receiver[B]) extends Receiver[A] {
   override def pushBatch(items: TraversableOnce[(Timestamp, A)]) = Future {
     val bs: Iterator[(Timestamp, B)] = items.toIterator.flatMap { case (time, a) => fn(a).map((time, _)) }
@@ -32,6 +36,10 @@ case class StoreReciever[K, V](batcher: Batcher,
       .map { optV => (time, (k, (optV, v))) }
       .flatMap(next.push)
   }
+}
+
+case class FanOut[T](nexts: Seq[Receiver[T]]) extends Receiver[T] {
+  override def push(item: (Timestamp, T)) = Future.collect(nexts.map(_.push(item))).unit
 }
 
 case object NullReceiver extends Receiver[Any] {
