@@ -3,7 +3,7 @@ import com.trendrr.nsq.lookup.NSQLookupDynMapImpl
 import com.twitter.summingbird.TimeExtractor
 import com.twitter.util.Try
 
-class NSQPushSource[T: TimeExtractor](config: NSQClientConfig, decodeFn : (Array[Byte]) => Try[T]) {
+class NSQPushSource[T: TimeExtractor](config: NSQClientConfig, decodeFn: Array[Byte] => Try[T]) {
 
   val lookup = new NSQLookupDynMapImpl
   config.lookupAddrs.foreach{case (host, port) => lookup.addAddr(host, port)}

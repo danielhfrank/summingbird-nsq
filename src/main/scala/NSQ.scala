@@ -6,7 +6,7 @@ import com.twitter.summingbird.graph._
 import com.twitter.summingbird.batch.{Timestamp, BatchID, Batcher}
 import com.twitter.summingbird.online.{OnlineServiceFactory, MergeableStoreFactory}
 import com.twitter.summingbird.planner.DagOptimizer
-import com.twitter.util.{Closable, Future, Time}
+import com.twitter.util.{Closable, Future, Time, FuturePool}
 
 import scala.language.existentials
 
@@ -23,8 +23,8 @@ object NSQPlan {
   }
 }
 
-case class SourcePlan[T](src: NSQPullSource[T], receiever: Receiver[T]) extends NSQPlan {
-  def run() = sys.error("TODO: infinite loop of pulling from source and pushing into the receiver")
+case class SourcePlan[T](fp: FuturePool, src: NSQPushSource[T], receiver: Receiver[T]) extends NSQPlan {
+  def run() = fp(src.buildNSQConsumer(receiver).start)
 }
 
 trait NSQStore[-K, V] {
@@ -32,10 +32,10 @@ trait NSQStore[-K, V] {
   def mergeable(sg: Semigroup[V]): Mergeable[(K, BatchID), V]
 }
 
-class NSQ extends Platform[NSQ]{
+class NSQ(fp: FuturePool) extends Platform[NSQ] {
 
   // These can be taken from Memory
-  type Sink[-T] = (T => Future[Unit])
+  type Sink[-T] = Tuple2[Timestamp, T] => Future[Unit]
   type Plan[T] = NSQPlan
 
   private type Prod[T] = Producer[NSQ, T]
@@ -45,7 +45,7 @@ class NSQ extends Platform[NSQ]{
   type Service[-K, +V] = ReadableStore[K, V]
 
   // And these are ours
-  type Source[T] = NSQPullSource[T]
+  type Source[T] = NSQPushSource[T]
 
   /**
    * When planning a Producer[_, T] we create a Phys[T]
@@ -85,7 +85,7 @@ class NSQ extends Platform[NSQ]{
           }
 
         val thisR = that match {
-          case Source(source) => SourceReceiver(source, target)
+          case Source(source) => SourceReceiver(target)
           case FlatMappedProducer(_, fn) => FlatMapReceiver(fn, target)
           case Summer(prod, store, sg) =>
             val mergeable = store.mergeable(sg)
@@ -93,11 +93,11 @@ class NSQ extends Platform[NSQ]{
             // Scala can't tell that T must be (K, (Option[V], V)) here
             // so we must cast
             def go[K, V](m: Mergeable[(K, BatchID), V]) =
-              StoreReciever(batcher, m, target.asInstanceOf[Receiver[(K, (Option[V], V))]])
+              StoreReceiver(batcher, m, target.asInstanceOf[Receiver[(K, (Option[V], V))]])
 
             go(mergeable)
 
-          case WrittenProducer(prod, queue) => sys.error("unsupported: " + that)
+          case WrittenProducer(prod, fn) => WriteReceiver(fn)
           case LeftJoinedProducer(prod, service) => sys.error("unsupported: " + that)
 
           case other =>
@@ -133,7 +133,7 @@ class NSQ extends Platform[NSQ]{
         def planSrc[T](s: com.twitter.summingbird.Source[NSQ, T]) = {
           val Source(nsqsrc) = s
           val (nextHm, (_, sourceR)) = toPhys(deps, hm, s)
-          val srcPlan = SourcePlan(nsqsrc, sourceR)
+          val srcPlan = SourcePlan(fp, nsqsrc, sourceR)
           (nextHm, srcPlan)
         }
         val (nextHm, srcPlan) = planSrc(head)
