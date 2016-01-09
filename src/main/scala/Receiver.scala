@@ -13,7 +13,7 @@ sealed trait Receiver[-T] {
     items.foldLeft(Future.Unit) { (prev, t) => prev.join(push(t)).unit }
 }
 
-case class SourceReceiver[T](src: NSQSource[T], next: Receiver[T]) extends Receiver[Nothing] {
+case class SourceReceiver[T](src: NSQPullSource[T], next: Receiver[T]) extends Receiver[Nothing] {
   override def push(item: (Timestamp, Nothing)) = sys.error("Cannot push into Source: " + item)
 }
 

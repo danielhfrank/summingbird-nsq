@@ -23,7 +23,7 @@ object NSQPlan {
   }
 }
 
-case class SourcePlan[T](src: NSQSource[T], receiever: Receiver[T]) extends NSQPlan {
+case class SourcePlan[T](src: NSQPullSource[T], receiever: Receiver[T]) extends NSQPlan {
   def run() = sys.error("TODO: infinite loop of pulling from source and pushing into the receiver")
 }
 
