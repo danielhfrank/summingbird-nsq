@@ -6,25 +6,44 @@ import com.twitter.summingbird.graph._
 import com.twitter.summingbird.batch.{Timestamp, BatchID, Batcher}
 import com.twitter.summingbird.online.{OnlineServiceFactory, MergeableStoreFactory}
 import com.twitter.summingbird.planner.DagOptimizer
-import com.twitter.util.{Closable, Future, Time, FuturePool}
+import com.twitter.util.{Closable, Future, Time, FuturePool, Promise}
 
 import scala.language.existentials
 
 sealed trait NSQPlan {
+  /* Returns when finished */
   def run(): Future[Unit]
+  /* Exceptions should be sent to the run Future */
+  def close(): Unit
 }
 
 object NSQPlan {
   implicit def monoidNSQPlan: Monoid[NSQPlan] = new Monoid[NSQPlan] {
-    val zero = new NSQPlan { def run() = Future.Unit }
+    val zero = new NSQPlan { def run() = Future.Unit; def close() = () }
     def plus(a: NSQPlan, b: NSQPlan) = new NSQPlan {
       def run() = a.run().join(b.run()).unit
+      def close() = {
+        a.close()
+        b.close()
+      }
     }
   }
 }
 
 case class SourcePlan[T](fp: FuturePool, src: NSQPushSource[T], receiver: Receiver[T]) extends NSQPlan {
-  def run() = fp(src.buildNSQConsumer(receiver).start)
+  private val closed = new Promise[Unit]()
+  private def consumer = Future {
+    val cons = src.buildNSQConsumer(receiver)
+    cons.start()
+    cons
+  }
+
+  def run() = for {
+    c <- consumer
+    _ <- closed
+  } yield c.close()
+
+  def close() = closed.setValue(())
 }
 
 trait NSQStore[-K, V] {
