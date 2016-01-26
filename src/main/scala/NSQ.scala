@@ -1,127 +1,163 @@
+import com.twitter.algebird.{Monoid, Semigroup}
 import com.twitter.storehaus.ReadableStore
 import com.twitter.storehaus.algebra.{Mergeable, MergeableStore}
 import com.twitter.summingbird._
-import com.twitter.summingbird.batch.{Timestamp, BatchID}
+import com.twitter.summingbird.graph._
+import com.twitter.summingbird.batch.{Timestamp, BatchID, Batcher}
 import com.twitter.summingbird.online.{OnlineServiceFactory, MergeableStoreFactory}
 import com.twitter.summingbird.planner.DagOptimizer
-import com.twitter.util.{Closable, Future, Time}
+import com.twitter.util.{Closable, Future, Time, FuturePool, Promise}
 
+import scala.language.existentials
 
-class NSQ extends Platform[NSQ]{
+sealed trait NSQPlan {
+  /* Returns when finished */
+  def run(): Future[Unit]
+  /* Exceptions should be sent to the run Future */
+  def close(): Unit
+}
+
+object NSQPlan {
+  implicit def monoidNSQPlan: Monoid[NSQPlan] = new Monoid[NSQPlan] {
+    val zero = new NSQPlan { def run() = Future.Unit; def close() = () }
+    def plus(a: NSQPlan, b: NSQPlan) = new NSQPlan {
+      def run() = a.run().join(b.run()).unit
+      def close() = {
+        a.close()
+        b.close()
+      }
+    }
+  }
+}
+
+case class SourcePlan[T](fp: FuturePool, src: NSQPushSource[T], receiver: Receiver[T]) extends NSQPlan {
+  private val closed = new Promise[Unit]()
+  private def consumer = Future {
+    val cons = src.buildNSQConsumer(receiver)
+    cons.start()
+    cons
+  }
+
+  def run() = for {
+    c <- consumer
+    _ <- closed
+  } yield c.close()
+
+  def close() = closed.setValue(())
+}
+
+trait NSQStore[-K, V] {
+  def batcher: Batcher
+  def mergeable(sg: Semigroup[V]): Mergeable[(K, BatchID), V]
+}
+
+class NSQ(fp: FuturePool) extends Platform[NSQ] {
 
   // These can be taken from Memory
-  type Sink[-T] = (T => Unit) // TODO maybe want to make this something w/ Future[Unit] so we can chain stuff
-  type Plan[T] = Stream[NSQWrappedValue[T]]
+  type Sink[-T] = Tuple2[Timestamp, T] => Future[Unit]
+  type Plan[T] = NSQPlan
 
   private type Prod[T] = Producer[NSQ, T]
-  private type JamfMap = Map[Prod[_], Stream[NSQWrappedValue[_]]]
 
   // These can be taken from Storm
-  type Store[-K, V] = MergeableStoreFactory[(K, BatchID), V]
+  type Store[-K, V] = NSQStore[K, V]
   type Service[-K, +V] = ReadableStore[K, V]
 
   // And these are ours
-  type Source[T] = NSQSource[T]
+  type Source[T] = NSQPushSource[T]
 
-
-  // -------------------
-
-  def plan[T](prod: TailProducer[NSQ, T]): NSQ#Plan[T] = {
-    val dagOptimizer = new DagOptimizer[NSQ] {}
-    val memoryTail = dagOptimizer.optimize(prod, dagOptimizer.ValueFlatMapToFlatMap)
-    val memoryDag = memoryTail.asInstanceOf[TailProducer[NSQ, T]]
-    toStream(memoryDag, Map.empty)._1
-  }
-
-  def toStream[T, K, V](outerProducer: Prod[T], jamfs: JamfMap): (Stream[NSQWrappedValue[T]], JamfMap) = {
-    jamfs.get(outerProducer) match {
-      case Some(s) => (s.asInstanceOf[Stream[NSQWrappedValue[T]]], jamfs)
+  /**
+   * When planning a Producer[_, T] we create a Phys[T]
+   * which gives the Receiver this Producer pushes into
+   * as well as the Receiver for this Producer, whose
+   * type we don't know (because Producer is not a category/arrow)
+   */
+  type Phys[T] = (Receiver[_], Receiver[T])
+  /**
+   * Given a Producer return the Receiver that all items should be pushed
+   * onto
+   */
+  private def toPhys[T](deps: Dependants[NSQ],
+    pushMap: HMap[Prod, Phys],
+    that: Prod[T]): (HMap[Prod, Phys], Phys[T]) =
+    pushMap.get(that) match {
+      case Some(s) => (pushMap, s)
       case None =>
-        val (s, m) = outerProducer match {
-          case NamedProducer(producer, _) => toStream(producer, jamfs)
-          case IdentityKeyedProducer(producer) => toStream(producer, jamfs)
-          case Source(source) => (source.toWrappedStream, jamfs)
-          case OptionMappedProducer(producer, fn) =>
-            val (s, m) = toStream(producer, jamfs)
-            (s.map(streamElem => streamElem.flatMapTrav(fn(_))), m)
-
-          case FlatMappedProducer(producer, fn) =>
-            val (s, m) = toStream(producer, jamfs)
-            (s.map(streamElem => streamElem.flatMapTrav(fn(_))), m)
-
-          case MergedProducer(l, r) =>
-            val (leftS, leftM) = toStream(l, jamfs)
-            val (rightS, rightM) = toStream(r, leftM)
-            (leftS ++ rightS, rightM)
-
-          case KeyFlatMappedProducer(producer, fn) =>
-            val (s, m) = toStream(producer, jamfs)
-            (s.map { streamValue =>
-              streamValue.flatMapTrav {
-                case (k, v) =>
-                  fn(k).map((_, v))
+        // This is not type-safe, sadly...
+        val (planned, target): (HMap[Prod, Phys], Receiver[T]) =
+          deps.dependantsAfterMerge(that) match {
+            case Nil => (pushMap, NullReceiver)
+            case single :: Nil =>
+              val (nextM, (r, _)) = toPhys(deps, pushMap, single)
+              // since r single accepts form that, it receives T
+              // but the type system won't help us here:
+              (nextM, r.asInstanceOf[Receiver[T]])
+            case many =>
+              val res = many.scanLeft((pushMap, None: Option[Receiver[T]])) { case ((pm, _), p) =>
+                val (post, (r, _)) = toPhys(deps, pm, p)
+                // the dependants must be able to accept type T
+                (post, Some(r.asInstanceOf[Receiver[T]]))
               }
-            }, m)
+              val finalMap = res.last._1
+              val allDependants = res.collect { case (_, Some(r)) => r }
+              (finalMap, FanOut[T](allDependants))
+          }
 
-          case ValueFlatMappedProducer(producer, fn) =>
-            val (s, m) = toStream(producer, jamfs)
-            (s.map { streamValue =>
-              streamValue.flatMapTrav {
-                case (k, v) =>
-                  fn(v).map((k, _))
-              }
-            }, m)
+        val thisR = that match {
+          case Source(source) => SourceReceiver(target)
+          case FlatMappedProducer(_, fn) => FlatMapReceiver(fn, target)
+          case Summer(prod, store, sg) =>
+            val mergeable = store.mergeable(sg)
+            val batcher = store.batcher
+            // Scala can't tell that T must be (K, (Option[V], V)) here
+            // so we must cast
+            def go[K, V](m: Mergeable[(K, BatchID), V]) =
+              StoreReceiver(batcher, m, target.asInstanceOf[Receiver[(K, (Option[V], V))]])
 
-          case AlsoProducer(l, r) => // XXX this looks like it won't work (see bit about forcing stream)
-            //Plan the first one, but ignore it
-            val (left, leftM) = toStream(l, jamfs)
-            // We need to force all of left to make sure any
-            // side effects in write happen
-            val lforcedEmpty = left.filter(_ => false)
-            val (right, rightM) = toStream(r, leftM)
-            (right ++ lforcedEmpty, rightM)
+            go(mergeable)
 
-          case WrittenProducer(producer, fn) =>
-            val (s, m) = toStream(producer, jamfs)
-            (s.map { streamValue =>
-              streamValue.foreach(fn)
-            }, m)
+          case WrittenProducer(prod, fn) => WriteReceiver(fn)
+          case LeftJoinedProducer(prod, service) => sys.error("unsupported: " + that)
 
-          case LeftJoinedProducer(producer, service) =>
-            val (s, m) = toStream(producer, jamfs)
-            val joined = s.map { streamValue =>
-              streamValue.flatMapFut{
-                case (k, v) =>
-                  val futureJoinResult = service.get(k)
-                  futureJoinResult.map { joinResult => (k, (v, joinResult))}
-              }
-            }
-            (joined, m)
-
-          case Summer(producer, store, monoid) =>
-            // TODO - use online.executor.Summer
-            val (s, m) = toStream(producer, jamfs)
-            val summed = s.map { streamValue =>
-              streamValue.flatMapFut {
-                case pair@(k, deltaV) =>
-                  val maybeTimestamp = streamValue.timestamp.map(Timestamp(_))
-                  val maybeBatchId = maybeTimestamp.map(store.mergeableBatcher.batchOf)
-                  maybeBatchId match {
-                    case Some(batchId) =>
-                      val oldVFuture = store.mergeableStore().merge((k, batchId), deltaV)
-                      oldVFuture.map { oldV => (k, (oldV, deltaV))}
-                    case None => Future.exception(new RuntimeException("asdf"))
-                  }
-
-
-              }
-            }
-            (summed, m)
+          case other =>
+            sys.error("%s encountered, which should have been optimized away".format(other))
         }
-        val goodS = s.asInstanceOf[Stream[NSQWrappedValue[T]]]
-        (goodS, m + (outerProducer -> goodS))
+        val phys = (thisR, target)
+        (planned + (that -> phys), phys)
     }
+
+  def plan[T](prod: TailProducer[NSQ, T]): NSQPlan = {
+    /*
+     * These rules should normalize the graph into a plannable state by the toPhys
+     * recursive function (removing no-op nodes and converting optionMap and KeyFlatMap to just
+     * flatMap)
+     */
+    val dagOptimizer = new DagOptimizer[NSQ] {}
+    import dagOptimizer._
+
+    val ourRule = OptionToFlatMap
+      .orElse(KeyFlatMapToFlatMap)
+      .orElse(FlatMapFusion)
+      .orElse(RemoveNames)
+      .orElse(RemoveIdentityKeyed)
+      .orElse(ValueFlatMapToFlatMap)
+
+
+    val deps = Dependants(optimize(prod, ourRule))
+    val heads: Seq[com.twitter.summingbird.Source[NSQ, _]] = deps.nodes.collect { case s @ Source(_) => s }
+    // Now plan all the sources, and combine them:
+    heads.foldLeft((HMap.empty[NSQ#Prod, Phys], Monoid.zero[NSQPlan])) {
+      case ((hm, plan), head) =>
+        // trick to get scala to see the types better (method with type parameter)
+        def planSrc[T](s: com.twitter.summingbird.Source[NSQ, T]) = {
+          val Source(nsqsrc) = s
+          val (nextHm, (_, sourceR)) = toPhys(deps, hm, s)
+          val srcPlan = SourcePlan(fp, nsqsrc, sourceR)
+          (nextHm, srcPlan)
+        }
+        val (nextHm, srcPlan) = planSrc(head)
+        val nextPlan = Monoid.plus(plan, srcPlan)
+        (nextHm, nextPlan)
+    }._2
   }
-
-
 }
