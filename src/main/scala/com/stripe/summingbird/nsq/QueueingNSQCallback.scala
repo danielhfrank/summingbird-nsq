@@ -1,3 +1,5 @@
+package com.stripe.summingbird.nsq
+
 import java.util
 
 import com.trendrr.nsq.{NSQMessageCallback, NSQMessage}

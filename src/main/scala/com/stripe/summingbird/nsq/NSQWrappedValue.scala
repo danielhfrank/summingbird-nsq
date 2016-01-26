@@ -1,3 +1,5 @@
+package com.stripe.summingbird.nsq
+
 import com.trendrr.nsq.NSQMessage
 import com.twitter.summingbird.TimeExtractor
 import com.twitter.util.Future

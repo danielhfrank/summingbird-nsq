@@ -1,3 +1,5 @@
+package com.stripe.summingbird.nsq
+
 import com.twitter.algebird.Semigroup
 import com.twitter.algebird.util.summer.Incrementor
 import com.twitter.summingbird.storm.Constants._

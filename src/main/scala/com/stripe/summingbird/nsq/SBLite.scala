@@ -1,3 +1,5 @@
+package com.stripe.summingbird.nsq
+
 import com.trendrr.nsq.{NSQMessage, NSQMessageCallback}
 import com.twitter.algebird.Aggregator
 import com.twitter.storehaus.algebra.MergeableStore
