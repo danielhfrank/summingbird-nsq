@@ -42,6 +42,6 @@ object Publish {
         <organization>Stripe</organization>
         <organizationUrl>https://stripe.com</organizationUrl>
           </developer>
-      </developers>)
+        </developers>)
   )
 }
