@@ -31,7 +31,6 @@ lazy val scalacheck = "org.scalacheck" %% "scalacheck" % "1.12.0"
 
 lazy val root = project.in(file(".")).
   settings(commonSettings: _*).
-  settings(Publish.skip: _*).
   settings(
     name := "summingbird-nsq",
     libraryDependencies ++= Seq(

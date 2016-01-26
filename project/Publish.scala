@@ -42,13 +42,6 @@ object Publish {
         <organization>Stripe</organization>
         <organizationUrl>https://stripe.com</organizationUrl>
           </developer>
-      </developers>)
-  )
-
-  lazy val skip = Seq(
-    publishTo := getPublishTo(isSnapshot.value),
-    publish := (),
-    publishLocal := (),
-    publishArtifact := false
+        </developers>)
   )
 }
