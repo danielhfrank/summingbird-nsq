@@ -44,11 +44,4 @@ object Publish {
           </developer>
       </developers>)
   )
-
-  lazy val skip = Seq(
-    publishTo := getPublishTo(isSnapshot.value),
-    publish := (),
-    publishLocal := (),
-    publishArtifact := false
-  )
 }
